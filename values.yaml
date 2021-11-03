@@ -153,7 +153,7 @@ global:
       directoryId: d2480fab-7029-4378-9e54-3b7a474eb327
       discoveryUrl: https://login.microsoftonline.com/d2480fab-7029-4378-9e54-3b7a474eb327/v2.0/.well-known/openid-configuration
       clientId: 294d0e21-4f5a-4bdc-a6c1-4981f423b63a
-      clientSecret: ""
+      clientSecret: "superhusteheslo"
       claimIdentifyingUser: upn
       # fallbackClaimIndetifyingUser: upn
       ## Request additional scopes, for example profile
