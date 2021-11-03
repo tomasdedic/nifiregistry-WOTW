@@ -1,0 +1,337 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nifi-registry.fullname" . }}
+  labels:
+    {{- include "nifi-registry.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "nifi-registry.selectorLabels" . | nindent 6 }}
+  serviceName: {{ include "nifi-registry.fullname" . }}
+  template:
+    metadata:
+{{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
+      labels:
+        {{- include "nifi-registry.selectorLabels" . | nindent 8 }}
+    spec:
+{{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
+      serviceAccountName: {{ include "nifi-registry.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: treeemaker
+          image: "busybox:1.32.0"
+          command:
+            - sh
+            - -c
+            - |
+              cd tree
+              [ -d nifi-registry-current/database ] || mkdir -p nifi-registry-current/database
+              [ -d nifi-registry-current/flow_storage ] || mkdir -p nifi-registry-current/flow_storage
+              [ -d nifi-registry-current/certs/admin ] || mkdir -p nifi-registry-current/certs/admin
+              [ -d nifi-registry-current/conf ] || mkdir -p nifi-registry-current/conf
+          volumeMounts:
+            - name: "databaseflow-storage"
+              mountPath: /tree
+{{- if .Values.properties.clusterSecure }}
+        - name: cert-request
+          imagePullPolicy: {{ .Values.global.tls.image.pullPolicy | quote }}
+          image: "{{ .Values.global.tls.image.repository }}:{{ .Values.global.tls.image.tag }}"
+          command:
+            - bash
+            - -c
+            - |
+              CERT_PATH="/opt/nifi-registry/nifi-registry-current/certs"
+              CA_ADDRESS="{{ template "ca.server" . }}:{{ .Values.global.tls.caService.port }}"
+              until echo "" | timeout -t 2 openssl s_client -connect "${CA_ADDRESS}"; do
+                # Checking if ca server using nifi-toolkit is up
+                echo "Waiting for CA to be available at ${CA_ADDRESS}"
+                sleep 2
+              done;
+              # generate node cert function
+              generate_node_cert() {
+               ${NIFI_TOOLKIT_HOME}/bin/tls-toolkit.sh client \
+                -c "{{ template "ca.server" . }}" \
+                -t {{ .Values.global.tls.token }} \
+{{- if .Values.properties.webProxyHost }}
+                --subjectAlternativeNames {{ .Values.properties.webProxyHost }}, $(hostname -f), {{ template "nifi-registry.fullname" . }}.{{ .Release.Namespace }}.svc \
+{{- else }}
+                --subjectAlternativeNames {{ template "nifi-registry.fullname" . }}.{{ .Release.Namespace }}.svc \
+{{- end }}
+                -D "CN=$(hostname -f), OU=NIFI" \
+                -p {{ .Values.global.tls.caService.port }}
+                }
+
+              generate_admin_cert() {
+               ${NIFI_TOOLKIT_HOME}/bin/tls-toolkit.sh client \
+                -c "{{ template "ca.server" . }}" \
+                -t {{ .Values.global.tls.token }} \
+              {{- if .Values.properties.webProxyHost }}
+                --subjectAlternativeNames {{ .Values.properties.webProxyHost }}, $(hostname -f), {{ template "nifi-registry.fullname" . }}.{{ .Release.Namespace }}.svc \
+              {{- else }}
+                --subjectAlternativeNames {{ template "nifi-registry.fullname" . }}.{{ .Release.Namespace }}.svc \
+              {{- end }}
+                -D "{{ .Values.auth.admin }}" \
+                -p {{ .Values.global.tls.caService.port }} \
+                -T PKCS12
+              export PASS=$(jq -r .keyStorePassword config.json)
+              openssl pkcs12 -in "keystore.pkcs12" -out "key.pem" -nocerts -nodes -password "env:PASS"
+              openssl pkcs12 -in "keystore.pkcs12" -out "crt.pem" -clcerts -nokeys -password "env:PASS"
+              openssl pkcs12 -in "keystore.pkcs12" -out "keystore.jks" -clcerts -nokeys -password "env:PASS"
+                }
+
+              cd ${CERT_PATH}
+              find . -type f -exec rm -rf {} \;
+              generate_node_cert
+              cd ${CERT_PATH}/admin
+              generate_admin_cert
+          volumeMounts:
+            - name: "databaseflow-storage"
+              mountPath: /opt/nifi-registry/nifi-registry-current/certs
+              subPath: nifi-registry-current/certs
+{{- end }}
+      containers:
+        # - name: policyloader
+        #   image: "busybox:1.32.0"
+        #   imagePullPolicy: {{ .Values.image.pullPolicy }}
+        #   command: ["/bin/bash", "-c", "./bin/policySet.sh ./conf/AdminGenerated.conf ./certs/admin/crt.pem ./certs/admin/key.pem nifiAdminGenerated"]
+        #   volumeMounts:
+        #     - name: "policyset-sh"
+        #       mountPath: /opt/nifi-registry/nifi-registry-current/bin/policySet.sh
+        #       subPath: "policySet.sh"
+        #     - name: "nifi-admin-generated"
+        #       mountPath: /opt/nifi-registry/nifi-registry-current/conf/nifiAdminGenerated.conf
+        #       subPath: "nifiAdminGenerated.conf"
+        #     - name: "databaseflow-storage"
+        #       mountPath: /opt/nifi-registry/nifi-registry-current/certs
+        #       subPath: nifi-registry-current/certs
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - bash
+            - -ce
+            - |
+              if ! test -f /opt/nifi-registry/nifi-registry-current/database/nifi-registry-primary.mv.db; then
+                cp /opt/nifi-registry/nifi-registry-current/database/nifi-registry-primary.mv.db.temp /opt/nifi-registry/nifi-registry-current/database/nifi-registry-primary.mv.db
+              fi
+
+              #config files are on PV, check if present otherwise use default from configmap
+              check_for_confile () {
+                conf_dir="/opt/nifi-registry/nifi-registry-current/conf"
+                if [ ! -f "$conf_dir/$1" ]; then
+                  echo "file "$conf_dir/$1" not exists, use default configmap"
+                  cat "$conf_dir/../temp/$1.temp" > "$conf_dir/$1"
+                fi
+              }
+              check_for_confile authorizations.xml
+              check_for_confile authorizers.xml
+              check_for_confile bootstrap.conf
+              check_for_confile identity-providers.xml
+              check_for_confile nifi-registry.properties
+              check_for_confile providers.xml
+              check_for_confile registry-aliases.xml
+              check_for_confile users.xml
+              check_for_confile logback.xml
+{{- if .Values.properties.clusterSecure }}
+              export_tls_values() {
+                CERT_PATH=/opt/nifi-registry/nifi-registry-current/certs
+                export AUTH=tls
+                export KEYSTORE_PATH=${CERT_PATH}/keystore.jks
+                export KEYSTORE_TYPE=jks
+                export KEYSTORE_PASSWORD=$(jq -r .keyStorePassword ${CERT_PATH}/config.json)
+                export KEY_PASSWORD=$KEYSTORE_PASSWORD
+                export TRUSTSTORE_PATH=${CERT_PATH}/truststore.jks
+                export TRUSTSTORE_TYPE=jks
+                export TRUSTSTORE_PASSWORD=$(jq -r .trustStorePassword ${CERT_PATH}/config.json)
+                # export NIFI_REGISTRY_WEB_HTTPS_HOST=$(hostname -f)
+                export NIFI_REGISTRY_WEB_HTTPS_HOST=0.0.0.0
+                export INITIAL_ADMIN_IDENTITY="{{ .Values.auth.admin }}"
+              }
+              export_tls_values
+{{- end }}
+                ./bin/policySet.sh ./admin/nifiAdminGenerated.conf ./certs/admin/crt.pem ./certs/admin/key.pem nifiAdminGenerated &
+                ${NIFI_REGISTRY_BASE_DIR}/scripts/start.sh
+          ports:
+{{- if .Values.properties.clusterSecure }}
+            - name: https
+              containerPort: {{ .Values.properties.httpsPort }}
+              protocol: TCP
+{{- else }}
+            - name: http
+              containerPort: {{ .Values.properties.httpPort }} 
+              protocol: TCP
+{{- end }}
+          volumeMounts:
+            - name: "databaseflow-storage"
+              mountPath: /opt/nifi-registry/nifi-registry-current/database
+              subPath: nifi-registry-current/database
+            - name: "databaseflow-storage"
+              mountPath: /opt/nifi-registry/nifi-registry-current/flow_storage
+              subPath: nifi-registry-current/flow_storage
+            - name: "databaseflow-storage"
+              mountPath: /opt/nifi-registry/nifi-registry-current/certs
+              subPath: nifi-registry-current/certs
+            - name: "databaseflow-storage"
+              mountPath: /opt/nifi-registry/nifi-registry-current/conf
+              subPath: nifi-registry-current/conf
+            - name: "policyset-sh"
+              mountPath: /opt/nifi-registry/nifi-registry-current/bin/policySet.sh
+              subPath: "policySet.sh"
+            - name: "nifi-admin-generated"
+              mountPath: /opt/nifi-registry/nifi-registry-current/admin/
+            - name: "secure-sh"
+              mountPath: /opt/nifi-registry/scripts/secure.sh
+              subPath: "secure.sh"
+            - name: "default-database"
+              mountPath: /opt/nifi-registry/nifi-registry-current/database/nifi-registry-primary.mv.db.temp
+              subPath: "nifi-registry-primary.mv.db.temp"
+            - name: "authorizations-xml-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/authorizations.xml.temp
+              subPath: "authorizations.xml.temp"
+            - name: "authorizers-xml-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/authorizers.xml.temp
+              subPath: "authorizers.temp"
+            - name: "bootstrap-conf-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/bootstrap.conf.temp
+              subPath: "bootstrap.conf.temp"
+            - name: "identity-providers-xml-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/identity-providers.xml.temp
+              subPath: "identity-providers.xml.temp"
+            - name: "logback-xml-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/logback.xml.temp
+              subPath: "logback.xml.temp"
+            - name: "nifi-registry-properties-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/nifi-registry.properties.temp
+              subPath: "nifi-registry.properties.temp"
+            - name: "providers-xml-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/providers.xml.temp
+              subPath: "providers.xml.temp"
+            - name: "registry-aliases-xml-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/registry-aliases.xml.temp
+              subPath: "registry-aliases.xml.temp"
+            - name: "users-xml-temp"
+              mountPath: /opt/nifi-registry/nifi-registry-current/temp/users.xml.temp
+              subPath: "users.xml.temp"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: "default-database"
+          secret:
+            secretName: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "default-database"
+                path: "nifi-registry-primary.mv.db.temp"
+        - name: "secure-sh"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "secure.sh"
+                path: "secure.sh"
+            defaultMode: 0555
+        - name: "policyset-sh"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "policySet.sh"
+                path: "policySet.sh"
+            defaultMode: 0555
+        - name: "nifi-admin-generated"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-adminconfig
+        - name: "authorizations-xml-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "authorizations.xml"
+                path: "authorizations.xml.temp"
+        - name: "authorizers-xml-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "authorizers.xml"
+                path: "authorizers.temp"
+        - name: "bootstrap-conf-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "bootstrap.conf"
+                path: "bootstrap.conf.temp"
+        - name: "identity-providers-xml-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "identity-providers.xml"
+                path: "identity-providers.xml.temp"
+        - name: "logback-xml-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "logback.xml"
+                path: "logback.xml.temp"
+        - name: "nifi-registry-properties-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "nifi-registry.properties"
+                path: "nifi-registry.properties.temp"
+        - name: "providers-xml-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "providers.xml"
+                path: "providers.xml.temp"
+        - name: "registry-aliases-xml-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "registry-aliases.xml"
+                path: "registry-aliases.xml.temp"
+        - name: "users-xml-temp"
+          configMap:
+            name: {{ include "nifi-registry.fullname" . }}-config
+            items:
+              - key: "users.xml"
+                path: "users.xml.temp"
+      {{- if not .Values.persistence.enabled }}
+        - name: "databaseflow-storage"
+          emptyDir: {}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: databaseflow-storage
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      {{- if .Values.persistence.databaseflowStorage }}
+      {{- if (eq "-" .Values.persistence.databaseflowStorage.storageClass) }}
+      storageClassName: ""
+      {{- else }}
+      storageClassName: "{{ .Values.persistence.databaseflowStorage.storageClass }}"
+      {{- end }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.persistence.databaseflowStorage.size | quote }}
+  {{- end }}

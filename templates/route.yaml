@@ -1,0 +1,35 @@
+{{- if .Values.openshift.route.enabled -}}
+{{- $fullName := include "nifi-registry.fullname" . -}}
+{{- $ingressPath := .Values.openshift.route.path -}}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "nifi-registry.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.properties.webProxyHost }}
+  host: {{ .Values.properties.webProxyHost }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $fullName }}
+    weight: 100
+  port:
+{{- if .Values.properties.clusterSecure }}
+    targetPort: https
+  tls:
+    {{- if .Values.properties.externalSecure }}
+    termination: edge
+    {{- else }}
+    termination: passthrough
+    {{- end }}
+    insecureEdgeTerminationPolicy: Redirect
+{{- else }}
+    targetPort: http
+{{- end }}
+{{- end }}

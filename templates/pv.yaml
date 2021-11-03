@@ -1,0 +1,23 @@
+{{- if .Values.persistence.manual -}}
+{{- $outer := . -}}
+  {{- range $replicas:= untilStep 1 (int (add1 .Values.replicaCount) ) 1}}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: databaseflow-storage0{{ $replicas }}
+  labels:
+  {{- with $outer }}
+    app: {{ include "nifi-registry.fullname" . }}
+  {{- end }}
+spec:
+  storageClassName: {{ $.Values.persistence.nfs.storageClass | quote }}
+  capacity:
+    storage: {{ $.Values.persistence.databaseflowStorage.size }}
+  accessModes:
+  - ReadWriteOnce
+  nfs:
+    path: {{ $.Values.persistence.nfs.pathPrefix }}0{{ $replicas }}
+    server: {{ $.Values.persistence.nfs.server }}
+  persistentVolumeReclaimPolicy: Retain
+  {{- end }}
+{{- end}}

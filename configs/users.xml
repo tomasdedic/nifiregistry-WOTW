@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<tenants>
+    <groups>
+        <group identifier="11ceed09-dc6d-46ac-bc47-995775aecdc0" name="nifiNodes">
+            <user identifier="02a64907-31f8-414b-942a-7b99d13acc3a"/>
+            <user identifier="5519f7b2-e217-4d8e-955e-4c35294ee184"/>
+            <user identifier="614f2341-1332-458f-a8cf-1ca5bba11790"/>
+            <user identifier="05452969-c631-4d72-8694-c66a12740772"/>
+            <user identifier="f17d9cb8-98db-446d-8ba6-effaa9ec5234"/>
+        </group>
+    </groups>
+    <users>
+        <user identifier="47c717db-75da-3d54-8ab3-1731497291c7" identity="CN=admin, OU=NIFI"/>
+        <user identifier="614f2341-1332-458f-a8cf-1ca5bba11790" identity="CN=nifi-0.nifi-headless.monolog-nifi.svc.cluster.local, OU=NIFI"/>
+        <user identifier="f17d9cb8-98db-446d-8ba6-effaa9ec5234" identity="CN=nifi-1.nifi-headless.monolog-nifi.svc.cluster.local, OU=NIFI"/>
+        <user identifier="5519f7b2-e217-4d8e-955e-4c35294ee184" identity="CN=nifi-2.nifi-headless.monolog-nifi.svc.cluster.local, OU=NIFI"/>
+        <user identifier="02a64907-31f8-414b-942a-7b99d13acc3a" identity="CN=nifi-3.nifi-headless.monolog-nifi.svc.cluster.local, OU=NIFI"/>
+        <user identifier="05452969-c631-4d72-8694-c66a12740772" identity="CN=nifi-4.nifi-headless.monolog-nifi.svc.cluster.local, OU=NIFI"/>
+    </users>
+</tenants>

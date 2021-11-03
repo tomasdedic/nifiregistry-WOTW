@@ -1,0 +1,16 @@
+apiVersion: v2
+appVersion: 1.12.1
+dependencies:
+- condition: ca.enabled
+  name: ca
+  repository: ""
+  version: 1.0.1
+description: Nifi registry with CA
+home: https://nifi.apache.org/
+icon: https://svn.apache.org/repos/asf/nifi/site/trunk/images/niFi-logo-horizontal-scaled.png
+keywords:
+- nifi
+- data
+- process
+name: nifiregistry
+version: 0.7.9

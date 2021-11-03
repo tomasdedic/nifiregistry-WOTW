@@ -1,0 +1,19 @@
+{
+  "days" : 825,
+  "keySize" : 2048,
+  "keyPairAlgorithm" : "RSA",
+  "signingAlgorithm" : "SHA256WITHRSA",
+  "dn" : "CN=nifi-ca,OU=NIFI",
+  "keyStore" : "nifi-ca-keystore.jks",
+  "keyStoreType" : "jks",
+  "keyStorePassword" : "v9j4ANtJEiy3qayl1m5WGDPDP2IKtxQH6SKRKpsCZ/E",
+  "keyPassword" : "v9j4ANtJEiy3qayl1m5WGDPDP2IKtxQH6SKRKpsCZ/E",
+  "token" : "sixteenCharacters",
+  "caHostname" : "nifi-ca",
+  "port" : 9090,
+  "dnPrefix" : "CN=",
+  "dnSuffix" : ", OU=NIFI",
+  "reorderDn" : true,
+  "additionalCACertificate" : "",
+  "domainAlternativeNames" : null
+}

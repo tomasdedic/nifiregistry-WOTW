@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nifi-registry.fullname" . }}
+  labels:
+    {{- include "nifi-registry.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+
+{{- if .Values.properties.clusterSecure }}
+  - port: {{ .Values.properties.httpsPort }}
+    name: https
+    protocol: TCP
+{{- else}}
+  - port: {{ .Values.properties.httpPort }}
+    name: http
+    protocol: TCP
+{{- end }}
+  selector:
+    {{- include "nifi-registry.selectorLabels" . | nindent 4 }}
